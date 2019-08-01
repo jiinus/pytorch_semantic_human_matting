@@ -93,72 +93,55 @@ def random_patch(image, trimap, patch_size, bg=None, a=None):
 # read/ crop/ resize inputs including fb, bg, alpha, trimap, composited image
 # attention: all resize operation should be done before composition
 def read_crop_resize(name, patch_size, stage):
-    if name[2] == 'bg':
-        img_path, bg_path = name[0].strip(), name[1].strip()
-        assert os.path.isfile(img_path) and os.path.isfile(bg_path), (img_path, bg_path)
+    img_path, bg_path = name[0].strip(), name[1].strip()
+    assert os.path.isfile(img_path) and os.path.isfile(bg_path), (img_path, bg_path)
 
-        image = cv2.imread(img_path, -1)  # it's RGBA image
+    image = cv2.imread(img_path, -1)  # it's RGBA image
+    fg = image[:,:,:3]
+    a = image[:,:,3]
+    bg = cv2.imread(bg_path)
+    trimap = gen_trimap.rand_trimap(a)
+
+    if stage == 't_net':
+        image, bg = random_patch(image, trimap, patch_size, bg=bg)
         fg = image[:,:,:3]
-        a = image[:,:,3]
-        bg = cv2.imread(bg_path)
-        trimap = gen_trimap.rand_trimap(a)
-
-        if stage == 't_net':
-            image, bg = random_patch(image, trimap, patch_size, bg=bg)
-            fg = image[:,:,:3]
-            a  = image[:,:,3]
-            # composite fg and bg, generate trimap
-            img = composite(fg, a, bg)
-            trimap = gen_trimap.rand_trimap(a)
-
-            return img, trimap
-
-        elif stage == 'm_net':
-            fg, a, bg = mask_center_crop(fg, a, bg, trimap, patch_size)
-            # generate trimap again to avoid alpha resize side-effect on trimap
-            trimap = gen_trimap.rand_trimap(a)
-            # composite fg and bg
-            img = composite(fg, a, bg)
-
-            return img, trimap, a, bg, fg
-
-        elif stage == 'end2end':
-            # for t_net
-            t_patch, m_patch = patch_size
-            image_m, bg_m = random_patch(image, trimap, t_patch, bg=bg)
-            fg_m = image_m[:,:,:3]
-            a_m  = image_m[:,:,3]
-            img_m = composite(fg_m, a_m, bg_m)
-            trimap_m = gen_trimap.rand_trimap(a_m)
-
-            # random flip and rotation before going to m_net
-            bg_m = bg_m.astype(np.uint8)
-            img_m, trimap_m, a_m, bg_m, fg_m = random_flip_rotation(img_m, trimap_m, a_m, bg_m, fg_m)
-
-            # for m_net
-            fg, a, bg = mask_center_crop(fg_m, a_m, bg_m, trimap_m, m_patch)
-            # generate trimap again to avoid alpha resize side-effect on trimap
-            trimap = gen_trimap.rand_trimap(a)
-            # composite fg and bg
-            img = composite(fg, a, bg)
-
-            return (img_m, trimap_m), (img, trimap, a, bg, fg)
-
-    # note: this type of data is only used for t_net training
-    elif name[2] == 'msk':
-        img_path, a_path = name[0].strip(), name[1].strip()
-        assert os.path.isfile(img_path) and os.path.isfile(a_path)
-
-        image = cv2.imread(img_path)  # it's composited image
-        a = cv2.imread(a_path, 0)  # it's grayscale image
-        a[a > 0] = 255
-        trimap = gen_trimap.rand_trimap(a)
-        img, a = random_patch(image, trimap, patch_size, a=a)
-
-        # generate trimap again to avoid alpha resize side-effect on trimap
+        a  = image[:,:,3]
+        # composite fg and bg, generate trimap
+        img = composite(fg, a, bg)
         trimap = gen_trimap.rand_trimap(a)
 
         return img, trimap
+
+    elif stage == 'm_net':
+        fg, a, bg = mask_center_crop(fg, a, bg, trimap, patch_size)
+        # generate trimap again to avoid alpha resize side-effect on trimap
+        trimap = gen_trimap.rand_trimap(a)
+        # composite fg and bg
+        img = composite(fg, a, bg)
+
+        return img, trimap, a, bg, fg
+
+    elif stage == 'end2end':
+        # for t_net
+        t_patch = patch_size
+        image_m, bg_m = random_patch(image, trimap, t_patch, bg=bg)
+        fg_m = image_m[:,:,:3]
+        a_m  = image_m[:,:,3]
+        img_m = composite(fg_m, a_m, bg_m)
+        trimap_m = gen_trimap.rand_trimap(a_m)
+        '''
+        # random flip and rotation before going to m_net
+        bg_m = bg_m.astype(np.uint8)
+        img_m, trimap_m, a_m, bg_m, fg_m = random_flip_rotation(img_m, trimap_m, a_m, bg_m, fg_m)
+
+        # for m_net
+        fg, a, bg = mask_center_crop(fg_m, a_m, bg_m, trimap_m, m_patch)
+        # generate trimap again to avoid alpha resize side-effect on trimap
+        trimap = gen_trimap.rand_trimap(a)
+        # composite fg and bg
+        img = composite(fg, a, bg)
+        '''
+        return img_m, trimap_m, a_m, bg_m, fg_m
 
 # crop image into crop_size
 def safe_crop(img, x, y, crop_size, resize_patch=None):
@@ -242,34 +225,25 @@ class human_matting_data(data.Dataset):
     """
     human_matting
     """
-    def __init__(self, args):
+    def __init__(self, args, split):
         super().__init__()
-        self.data_root = args.dataDir
         self.patch_size = args.patch_size
         self.phase = args.train_phase
-        self.dataRatio = args.dataRatio
 
-        self.fg_paths = []
-        for file in args.fgLists:
-            fg_path = os.path.join(self.data_root, file)
-            assert os.path.isfile(fg_path), "missing file at {}".format(fg_path)
-            with open(fg_path, 'r') as f:
-                self.fg_paths.append(f.readlines())
+        if split == 'train':
+            with open(args.train_fg_list, 'r') as f:
+                self.path_fg=f.readlines()
+        else:
+            with open(args.val_fg_list, 'r') as f:
+                self.path_fg=f.readlines()
 
-        bg_path = os.path.join(self.data_root, args.bg_list)
-        assert os.path.isfile(bg_path), "missing bg file at: ".format(bg_path)
-        with open(bg_path, 'r') as f:
+        with open(args.bg_list, 'r') as f:
             self.path_bg = f.readlines()
 
-        assert len(self.path_bg) == sum([self.dataRatio[i]*len(self.fg_paths[i]) for i in range(len(self.fg_paths))]), \
-            'the total num of bg is not equal to fg: bg-{}, fg-{}'\
-                .format(len(self.path_bg), [self.dataRatio[i]*len(self.fg_paths[i]) for i in range(len(self.fg_paths))])
-        self.num = len(self.path_bg)
+        self.num = len(self.path_fg)
+        self.bg_num = len(self.path_bg)
 
-        #self.shuffle_count = 0
-        self.shuffle_data()
-
-        print("Dataset : total training images:{}".format(self.num))
+        print("Dataset : total {} images:{}".format(split, self.num))
 
     def __getitem__(self, index):
         # data structure returned :: dict {}
@@ -279,7 +253,7 @@ class human_matting_data(data.Dataset):
         
         if self.phase == 'pre_train_t_net':
             # read files, random crop and resize
-            image, trimap = read_crop_resize(self.names[index], self.patch_size, stage='t_net')
+            image, trimap = read_crop_resize((self.path_fg[index],self.path_bg[random.randrange(0,self.bg_num)]), self.patch_size, stage='t_net')
             # augmentation
             image, trimap = random_flip_rotation(image, trimap)
 
@@ -302,7 +276,7 @@ class human_matting_data(data.Dataset):
 
         elif self.phase == 'pre_train_m_net':
             # read files
-            image, trimap, alpha, bg, fg = read_crop_resize(self.names[index], self.patch_size, stage='m_net')
+            image, trimap, alpha, bg, fg = read_crop_resize((self.path_fg[index],self.path_bg[random.randrange(0,self.bg_num)]), self.patch_size, stage='m_net')
             # augmentation
             image, trimap, alpha, bg, fg = random_flip_rotation(image, trimap, alpha, bg, fg)
 
@@ -336,74 +310,24 @@ class human_matting_data(data.Dataset):
         elif self.phase == 'end_to_end':
             # read files
             assert len(self.patch_size) == 2, 'patch_size should have two values for end2end training !'
-            input_t, input_m = read_crop_resize(self.names[index], self.patch_size, stage='end2end')
-            img_t, tri_t = input_t
-            img_m, tri_m, a_m, bg_m, fg_m = input_m
+            img, trimap, a, bg, fg = read_crop_resize((self.path_fg[index],self.path_bg[random.randrange(0,self.bg_num)]), self.patch_size, stage='end2end')
 
             # NOTE ! ! ! trimap should be 3 classes for classification : fg, bg. unsure
-            tri_t[tri_t == 0] = 0
-            tri_t[tri_t == 128] = 1
-            tri_t[tri_t == 255] = 2
-            tri_m[tri_m == 0] = 0
-            tri_m[tri_m == 128] = 1
-            tri_m[tri_m == 255] = 2
+            trimap[trimap == 0] = 0
+            trimap[trimap == 128] = 1
+            trimap[trimap == 255] = 2
 
-            assert img_t.shape[:2] == tri_t.shape[:2]
-            assert img_m.shape[:2] == tri_m.shape[:2] == a_m.shape[:2]
+            assert img.shape[:2] == trimap.shape[:2] == a.shape[:2]
 
             # t_net processing
-            img_t = img_t.astype(np.float32) / 255.0
-            img_t = np2Tensor(img_t)
-            tri_t = np2Tensor(tri_t)
-            tri_t = tri_t.unsqueeze_(0)  # shape: 1, h, w
-
-            # m_net processing
-            img_m = img_m.astype(np.float32) / 255.0
-            a_m = a_m.astype(np.float32) / 255.0
-            bg_m = bg_m.astype(np.float32) / 255.0
-            fg_m = fg_m.astype(np.float32) / 255.0
-
-            # trimap one-hot encoding: when pre-train M_net, trimap should have 3 channels
-            tri_m = np.eye(3)[tri_m.reshape(-1)].reshape(list(tri_m.shape) + [3])
-            # to tensor
-            img_m = np2Tensor(img_m)
-            tri_m = np2Tensor(tri_m)
-            a_m = np2Tensor(a_m)
-            bg_m = np2Tensor(bg_m)
-            fg_m = np2Tensor(fg_m)
-
-            tri_m = tri_m.unsqueeze_(0)  # shape: 1, h, w
-            a_m = a_m.unsqueeze_(0)
-
-            sample = [{'image':img_t, 'trimap':tri_t},
-                      {'image':img_m, 'trimap':tri_m, 'alpha': a_m, 'bg':bg_m, 'fg':fg_m}]
+            img = img.astype(np.float32) / 255.0
+            img = np2Tensor(img)
+            trimap = np2Tensor(trimap)
+            trimap = trimap.unsqueeze_(0)  # shape: 1, h, w
+            sample = {'image':img, 'trimap':trimap, 'alpha': a, 'bg':bg, 'fg':fg}
 
         return sample
-
-    def shuffle_data(self):
-        # data structure of self.names:: list
-        # (.png_img, .bg, 'bg') or (.composite, .mask, 'msk) :: tuple
-        self.names = []
-
-        random.shuffle(self.path_bg)
-
-        count = 0
-        for idx, path_list in enumerate(self.fg_paths):
-            bg_per_fg = self.dataRatio[idx]
-            for path in path_list:
-                for i in range(bg_per_fg):
-                    self.names.append((path, self.path_bg[count], 'bg'))  # 'bg' means we need to composite fg & bg
-                    count += 1
-        
-        assert count == len(self.path_bg)
-
-        """# debug usage: check shuffled data after each call
-        with open('shuffled_data_{}.txt'.format(self.shuffle_count),'w') as f:
-            for name in self.names:
-                f.write(name[0].strip()+'  ||  '+name[1].strip()+'\n')
-        self.shuffle_count += 1
-        """
-
+    
     def __len__(self):
         return self.num
 
