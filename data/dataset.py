@@ -100,7 +100,7 @@ def read_crop_resize(name, patch_size, stage):
     fg = image[:,:,:3]
     a = image[:,:,3]
     bg = cv2.imread(bg_path)
-    trimap = gen_trimap.rand_trimap(a, smooth=True))
+    trimap = gen_trimap.rand_trimap(a, smooth=True)
 
     if stage == 't_net':
         image, bg = random_patch(image, trimap, patch_size, bg=bg)
@@ -108,14 +108,14 @@ def read_crop_resize(name, patch_size, stage):
         a  = image[:,:,3]
         # composite fg and bg, generate trimap
         img = composite(fg, a, bg)
-        trimap = gen_trimap.rand_trimap(a, smooth=True))
+        trimap = gen_trimap.rand_trimap(a, smooth=True)
 
         return img, trimap
 
     elif stage == 'm_net':
         fg, a, bg = mask_center_crop(fg, a, bg, trimap, patch_size)
         # generate trimap again to avoid alpha resize side-effect on trimap
-        trimap = gen_trimap.rand_trimap(a, smooth=True))
+        trimap = gen_trimap.rand_trimap(a, smooth=True)
         # composite fg and bg
         img = composite(fg, a, bg)
 
@@ -128,7 +128,7 @@ def read_crop_resize(name, patch_size, stage):
         fg_m = image_m[:,:,:3]
         a_m  = image_m[:,:,3]
         img_m = composite(fg_m, a_m, bg_m)
-        trimap_m = gen_trimap.rand_trimap(a_m, smooth=True))
+        trimap_m = gen_trimap.rand_trimap(a_m, smooth=True)
         '''
         # random flip and rotation before going to m_net
         bg_m = bg_m.astype(np.uint8)
@@ -137,7 +137,7 @@ def read_crop_resize(name, patch_size, stage):
         # for m_net
         fg, a, bg = mask_center_crop(fg_m, a_m, bg_m, trimap_m, m_patch)
         # generate trimap again to avoid alpha resize side-effect on trimap
-        trimap = gen_trimap.rand_trimap(a, smooth=True))
+        trimap = gen_trimap.rand_trimap(a, smooth=True)
         # composite fg and bg
         img = composite(fg, a, bg)
         '''
